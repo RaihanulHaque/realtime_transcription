@@ -1,0 +1,170 @@
+<!-- transcription/templates/transcription/index.html -->
+
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Real-time Transcription</title>
+    <style>
+      .record-button {
+        width: 60px;
+        height: 60px;
+        border-radius: 50%;
+        background-color: #ff4444;
+        border: none;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 20px auto;
+      }
+
+      .recording {
+        animation: pulse 1.5s infinite;
+        background-color: #ff0000;
+      }
+
+      @keyframes pulse {
+        0% {
+          transform: scale(1);
+        }
+        50% {
+          transform: scale(1.1);
+        }
+        100% {
+          transform: scale(1);
+        }
+      }
+
+      .transcript-container {
+        margin: 20px auto;
+        padding: 20px;
+        border: 1px solid #ccc;
+        border-radius: 5px;
+        min-height: 100px;
+        max-width: 600px;
+      }
+
+      .status {
+        text-align: center;
+        color: #666;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <button id="recordButton" class="record-button">🎤</button>
+      <div class="status" id="status">Click to start recording</div>
+      <div class="transcript-container">
+        <p id="transcriptText"></p>
+      </div>
+    </div>
+
+    <script>
+      let mediaRecorder;
+      let audioChunks = [];
+      let isRecording = false;
+      let socket;
+
+      const recordButton = document.getElementById("recordButton");
+      const transcriptText = document.getElementById("transcriptText");
+      const statusText = document.getElementById("status");
+
+      // Connect WebSocket
+      function connectWebSocket() {
+        socket = new WebSocket(
+          "ws://" + window.location.host + "/ws/transcribe/"
+        );
+
+        socket.onopen = function (e) {
+          console.log("WebSocket connected");
+        };
+
+        socket.onmessage = function (e) {
+          const data = JSON.parse(e.data);
+          if (data.transcript) {
+            transcriptText.textContent += " " + data.transcript;
+          }
+          if (data.error) {
+            console.error("Error:", data.error);
+            statusText.textContent = "Error: " + data.error;
+          }
+        };
+
+        socket.onclose = function (e) {
+          console.log("WebSocket disconnected");
+        };
+      }
+
+      recordButton.addEventListener("click", toggleRecording);
+
+      async function toggleRecording() {
+        if (!isRecording) {
+          startRecording();
+        } else {
+          stopRecording();
+        }
+      }
+
+      async function startRecording() {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: true,
+          });
+          mediaRecorder = new MediaRecorder(stream);
+
+          mediaRecorder.ondataavailable = (event) => {
+            if (event.data.size > 0) {
+              audioChunks.push(event.data);
+              sendAudioChunk(event.data);
+            }
+          };
+
+          mediaRecorder.start(1000); // Collect data every 1 second
+          isRecording = true;
+          recordButton.classList.add("recording");
+          statusText.textContent = "Recording...";
+          connectWebSocket();
+        } catch (err) {
+          console.error("Error accessing microphone:", err);
+          statusText.textContent = "Error accessing microphone";
+        }
+      }
+
+      function stopRecording() {
+        mediaRecorder.stop();
+        mediaRecorder.stream.getTracks().forEach((track) => track.stop());
+        isRecording = false;
+        recordButton.classList.remove("recording");
+        statusText.textContent = "Click to start recording";
+        socket.close();
+        audioChunks = [];
+      }
+
+      async function sendAudioChunk(audioChunk) {
+        // Create FormData and append the audio chunk
+        const formData = new FormData();
+        formData.append("audio", audioChunk, "audio_chunk.wav");
+
+        try {
+          // Send via HTTP POST
+          const response = await fetch("/transcribe/", {
+            method: "POST",
+            body: formData,
+          });
+
+          const result = await response.json();
+          if (result.transcript) {
+            transcriptText.textContent += " " + result.transcript;
+          }
+          if (result.error) {
+            console.error("Error:", result.error);
+            statusText.textContent = "Error: " + result.error;
+          }
+        } catch (error) {
+          console.error("Error sending audio:", error);
+          statusText.textContent = "Error sending audio";
+        }
+      }
+    </script>
+  </body>
+</html>
