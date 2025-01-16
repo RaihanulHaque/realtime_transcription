@@ -1,0 +1,85 @@
+<!-- filepath: transcription/templates/transcription/index.html -->
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Real-time Transcription</title>
+    <style>
+      .container {
+        max-width: 800px;
+        margin: 20px auto;
+        padding: 20px;
+      }
+      #transcription {
+        margin-top: 20px;
+        min-height: 100px;
+        padding: 10px;
+        border: 1px solid #ccc;
+      }
+      .recording {
+        background-color: #ff0000;
+        color: white;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <button id="recordButton">Start Recording</button>
+      <div id="transcription"></div>
+    </div>
+
+    <script>
+      let mediaRecorder;
+      let ws;
+      const recordButton = document.getElementById("recordButton");
+      const transcriptionDiv = document.getElementById("transcription");
+
+      function connectWebSocket() {
+        ws = new WebSocket(`ws://${window.location.host}/ws/transcribe/`);
+        ws.onmessage = function (event) {
+          const data = JSON.parse(event.data);
+          console.log(data);
+          //   if (data.type === "transcription") {
+          // transcriptionDiv.textContent = data.text;
+          //   }
+        };
+      }
+
+      recordButton.addEventListener("click", async () => {
+        if (!mediaRecorder || mediaRecorder.state === "inactive") {
+          recordButton.textContent = "Stop Recording";
+          recordButton.classList.add("recording");
+
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: true,
+          });
+          mediaRecorder = new MediaRecorder(stream);
+          connectWebSocket();
+
+          mediaRecorder.ondataavailable = (event) => {
+            if (event.data.size > 0) {
+              const reader = new FileReader();
+              reader.onloadend = () => {
+                const base64Data = reader.result.split(",")[1];
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                  ws.send(
+                    JSON.stringify({
+                      audio: base64Data,
+                    })
+                  );
+                }
+              };
+              reader.readAsDataURL(event.data);
+            }
+          };
+
+          mediaRecorder.start(1000);
+        } else {
+          recordButton.textContent = "Start Recording";
+          recordButton.classList.remove("recording");
+          mediaRecorder.stop();
+          if (ws) ws.close();
+        }
+      });
+    </script>
+  </body>
+</html>
